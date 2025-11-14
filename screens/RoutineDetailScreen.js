@@ -9,22 +9,84 @@ import {
   ScrollView,
   TouchableOpacity,
 } from 'react-native';
-import { loadRoutines } from '../utils/storage';
-import { getDifficultyColor } from '../data/exercises';
+import { loadRoutines, saveRoutines } from '../utils/storage';
+import { exercises as masterExercises, getDifficultyColor } from '../data/exercises';
 import { colors, spacing, borderRadius, typography, commonStyles } from '../constants/theme';
 
+const enrichExercise = (exercise) => {
+  const canonical = masterExercises.find((item) => item.id === exercise.id) || {};
+  return {
+    ...canonical,
+    ...exercise,
+    cueProfile: exercise.cueProfile || canonical.cueProfile,
+    cueDurationSeconds:
+      exercise.cueDurationSeconds || canonical.cueDurationSeconds || 45,
+    sets: exercise.sets ?? canonical.sets ?? 3,
+    reps: exercise.reps ?? canonical.reps ?? 10,
+  };
+};
+
+const hydrateRoutine = (routine) => ({
+  ...routine,
+  exercises: (routine.exercises || []).map(enrichExercise),
+});
+
+const formatDuration = (seconds) => {
+  if (!seconds) return '30s';
+  if (seconds < 60) return `${seconds}s`;
+  const mins = Math.floor(seconds / 60);
+  const secs = seconds % 60;
+  return secs === 0 ? `${mins} min` : `${mins} min ${secs}s`;
+};
+
 export default function RoutineDetailScreen({ route, navigation }) {
-  const { routineId } = route.params;
+  const { routineId, routineData, isRecommended: initialRecommended } = route.params || {};
   const [routine, setRoutine] = useState(null);
+  const [isRecommended, setIsRecommended] = useState(initialRecommended || false);
+  const [isFollowing, setIsFollowing] = useState(false);
 
   useEffect(() => {
-    loadRoutine();
-  }, []);
+    if (routineData) {
+      setRoutine(hydrateRoutine(routineData));
+      setIsRecommended(initialRecommended ?? routineData.isRecommended ?? false);
+    } else {
+      loadRoutine();
+    }
+  }, [routineId, routineData]);
 
   const loadRoutine = async () => {
     const routines = await loadRoutines();
     const foundRoutine = routines.find(r => r.id === routineId);
-    setRoutine(foundRoutine);
+    if (foundRoutine) {
+      setRoutine(hydrateRoutine(foundRoutine));
+      setIsRecommended(foundRoutine.isRecommended || false);
+    }
+  };
+
+  const handleFollowRoutine = async () => {
+    if (!routine) return;
+    setIsFollowing(true);
+    const stored = await loadRoutines();
+    const alreadyExists = stored.some(
+      (item) => item.templateId === routine.id || item.id === routine.id
+    );
+    if (alreadyExists) {
+      setIsRecommended(false);
+      setIsFollowing(false);
+      return;
+    }
+    const newRoutine = {
+      ...routine,
+      id: `${routine.id}_${Date.now()}`,
+      templateId: routine.id,
+      isRecommended: false,
+      createdAt: new Date().toISOString(),
+    };
+    const updated = [...stored, newRoutine];
+    await saveRoutines(updated);
+    setIsRecommended(false);
+    setIsFollowing(false);
+    setRoutine(hydrateRoutine(newRoutine));
   };
 
   const getDifficultyLabel = (difficulty) => {
@@ -80,7 +142,11 @@ export default function RoutineDetailScreen({ route, navigation }) {
                   <View style={styles.exerciseMainInfo}>
                     <Text style={styles.exerciseName}>{exercise.name.toUpperCase()}</Text>
                     <Text style={styles.exerciseDetails}>
-                      {exercise.sets} SETS × {exercise.reps} REPS
+                      {exercise.cueProfile?.startsWith('hold')
+                        ? `${exercise.sets} SETS × ${formatDuration(
+                            exercise.cueDurationSeconds || 45
+                          )} HOLD`
+                        : `${exercise.sets} SETS × ${exercise.reps} REPS`}
                     </Text>
                   </View>
                   <View
@@ -100,10 +166,25 @@ export default function RoutineDetailScreen({ route, navigation }) {
             ))}
           </View>
 
+          {isRecommended && (
+            <TouchableOpacity
+              style={[styles.startButton, styles.followCta]}
+              onPress={handleFollowRoutine}
+              disabled={isFollowing}
+            >
+              <Text style={styles.startButtonText}>
+                {isFollowing ? 'ADDING...' : 'ADD TO MY ROUTINES'}
+              </Text>
+            </TouchableOpacity>
+          )}
+
           <TouchableOpacity
             style={styles.startButton}
             onPress={() =>
-              navigation.navigate('WorkoutPlayer', { routineId: routine.id })
+              navigation.navigate('WorkoutPlayer', {
+                routineId: routine.id,
+                routineData: routine,
+              })
             }
           >
             <Text style={styles.startButtonText}>START WORKOUT</Text>
@@ -224,6 +305,11 @@ const styles = StyleSheet.create({
     padding: spacing.lg,
     marginTop: spacing.md,
     marginBottom: spacing.xl,
+  },
+  followCta: {
+    backgroundColor: 'transparent',
+    borderWidth: 2,
+    borderColor: colors.textPrimary,
   },
   startButtonText: {
     ...commonStyles.primaryButtonText,

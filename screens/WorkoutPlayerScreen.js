@@ -16,8 +16,13 @@ import { exercises as masterExercises, getDifficultyColor } from '../data/exerci
 import { loadWorkoutHistory, saveWorkoutHistory } from '../utils/storage';
 import { colors, spacing, borderRadius, typography, commonStyles } from '../constants/theme';
 
+const enrichRoutine = (routine) => ({
+  ...routine,
+  exercises: (routine.exercises || []).map(enrichExercise),
+});
+
 export default function WorkoutPlayerScreen({ route, navigation }) {
-  const { routineId } = route.params;
+  const { routineId, routineData } = route.params || {};
   const [routine, setRoutine] = useState(null);
   const [currentExerciseIndex, setCurrentExerciseIndex] = useState(0);
   const [currentSet, setCurrentSet] = useState(1);
@@ -44,8 +49,12 @@ export default function WorkoutPlayerScreen({ route, navigation }) {
   const holdTimeoutsRef = useRef([]);
 
   useEffect(() => {
-    loadRoutine();
-  }, []);
+    if (routineData) {
+      setRoutine(enrichRoutine(routineData));
+    } else {
+      loadRoutine();
+    }
+  }, [routineId, routineData]);
 
   useEffect(() => {
     let interval = null;
@@ -176,17 +185,14 @@ export default function WorkoutPlayerScreen({ route, navigation }) {
   };
 
   const loadRoutine = async () => {
+    if (!routineId) return;
     const routines = await loadRoutines();
     const foundRoutine = routines.find(r => r.id === routineId);
     if (!foundRoutine) {
       setRoutine(null);
       return;
     }
-    const enrichedExercises = (foundRoutine.exercises || []).map(enrichExercise);
-    setRoutine({
-      ...foundRoutine,
-      exercises: enrichedExercises,
-    });
+    setRoutine(enrichRoutine(foundRoutine));
   };
 
   const stopCues = () => {
